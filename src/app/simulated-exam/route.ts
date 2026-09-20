@@ -15,7 +15,7 @@ import {
   type Subject,
 } from "@/lib/exam-config";
 import { OpenCodeAuthError } from "@/lib/opencode";
-import { markdownToPdf } from "@/lib/pdf";
+import { markdownToPdf, pdfSupported } from "@/lib/pdf";
 
 export const dynamic = "force-dynamic";
 
@@ -26,6 +26,8 @@ export async function GET() {
     year: EXAM_YEAR,
     durationMinutes: EXAM_DURATION_MINUTES,
     outputDir: OUTPUT_DIR,
+    // 部署在沒有 Edge/Chrome 的環境（如 Vercel）時為 false，前端會提示改在本機執行
+    capabilities: { pdf: pdfSupported() },
     schools: SCHOOLS.map((s) => ({ id: s.id, name: s.name })),
     subjects: SUBJECTS.map((s) => ({
       id: s.id,
@@ -62,6 +64,17 @@ export async function POST(request: Request) {
   const auth = readApiKey(request);
   if (!auth.ok) return auth.response;
   const apiKey = auth.key;
+
+  // 事先擋下：無法產生 PDF 的環境不該先呼叫模型（會白白消耗使用者的金鑰額度）才失敗
+  if (!pdfSupported()) {
+    return Response.json(
+      {
+        error: "此伺服器環境沒有 Edge 或 Chrome，無法產生 PDF。請在安裝了瀏覽器的本機執行本專案（npm run dev）",
+        code: "no-browser",
+      },
+      { status: 503 },
+    );
+  }
 
   let body: GenerateBody;
   try {

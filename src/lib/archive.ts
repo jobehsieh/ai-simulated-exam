@@ -25,7 +25,8 @@ export async function scanSubjectArchive(subject: Subject): Promise<ArchiveEntry
   for (const school of SCHOOLS) {
     const years = new Set<number>();
     for (const dir of subject.archiveDirs) {
-      const files = await listDir(path.join(ARCHIVE_DIR, dir, school.archiveName));
+      // 路徑來自使用者設定的外部資料夾，不是專案檔案，告訴打包器不必追蹤整個專案
+      const files = await listDir(path.join(/* turbopackIgnore: true */ ARCHIVE_DIR, dir, school.archiveName));
       for (const file of files) {
         const m = file.match(/_(\d{3})_/);
         if (m && file.toLowerCase().endsWith(".pdf")) years.add(Number(m[1]));

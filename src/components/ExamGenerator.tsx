@@ -15,6 +15,7 @@ interface Options {
   year: number;
   durationMinutes: number;
   outputDir: string;
+  capabilities: { pdf: boolean };
   schools: { id: string; name: string }[];
   subjects: { id: string; name: string; archive: ArchiveEntry[]; plan: { topics: PlanTopic[] } }[];
 }
@@ -96,7 +97,7 @@ export default function ExamGenerator() {
   }, []);
 
   async function generate() {
-    if (!options || subjects.length === 0) return;
+    if (!options || subjects.length === 0 || !options.capabilities.pdf) return;
     // BYOK：沒有金鑰就先請使用者設定
     if (!apiKey) {
       openApiKeyDialog();
@@ -192,6 +193,17 @@ export default function ExamGenerator() {
 
   return (
     <div className="flex flex-col gap-6">
+      {/* 伺服器環境不支援 PDF（例如 Vercel）：明確告知，不讓使用者白等 */}
+      {!options.capabilities.pdf && (
+        <section className="rounded-2xl border border-marker bg-marker/25 p-5 sm:px-8">
+          <h2 className="font-serif text-lg font-bold">此環境目前無法出題</h2>
+          <p className="mt-1 text-sm leading-relaxed">
+            這個伺服器沒有 Edge 或 Chrome，無法把試卷轉成 PDF；也讀不到本機的考古題與模擬考題資料夾。
+            請在你自己的電腦上執行本專案（<code className="font-mono">npm run dev</code>）來使用出題功能。
+          </p>
+        </section>
+      )}
+
       {/* 尚未設定 API 金鑰（BYOK） */}
       {apiKey === null && (
         <section className="flex flex-wrap items-center justify-between gap-4 rounded-2xl border border-vermilion/40 bg-vermilion/[0.06] p-5 sm:px-8">
@@ -309,7 +321,7 @@ export default function ExamGenerator() {
         <div className="mt-8 flex flex-wrap items-center gap-4 border-t border-ink/15 pt-6">
           <button
             onClick={generate}
-            disabled={running || subjects.length === 0}
+            disabled={running || subjects.length === 0 || !options.capabilities.pdf}
             className="group inline-flex items-center gap-3 rounded-full bg-vermilion px-8 py-3.5 text-base font-bold text-white shadow-[0_6px_0_-2px_rgb(120_28_14)] transition-all enabled:hover:translate-y-0.5 enabled:hover:shadow-[0_4px_0_-2px_rgb(120_28_14)] enabled:active:translate-y-1.5 enabled:active:shadow-none disabled:cursor-not-allowed disabled:bg-ink/25 disabled:shadow-none focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-ink"
           >
             {running ? "生成中…" : "生成試題"}

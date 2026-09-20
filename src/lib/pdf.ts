@@ -2,7 +2,6 @@ import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { marked } from "marked";
-import { chromium } from "playwright-core";
 
 const BROWSER_CANDIDATES = [
   process.env.BROWSER_PATH,
@@ -10,12 +9,27 @@ const BROWSER_CANDIDATES = [
   "C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe",
   "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
   "C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe",
+  "/usr/bin/google-chrome",
+  "/usr/bin/chromium",
+  "/usr/bin/chromium-browser",
+  "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+  "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
 ];
 
 function findBrowser(): string {
   const found = BROWSER_CANDIDATES.find((p) => p && existsSync(p));
   if (!found) throw new Error("找不到 Edge 或 Chrome，請以環境變數 BROWSER_PATH 指定瀏覽器執行檔");
   return found;
+}
+
+/** 這個環境能否產生 PDF（需要本機安裝 Edge / Chrome）。Vercel 這類無伺服器環境沒有，會回傳 false */
+export function pdfSupported(): boolean {
+  try {
+    findBrowser();
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 const CSS = `
@@ -77,6 +91,8 @@ export async function markdownToPdf(md: string): Promise<Buffer> {
   const html = `<!DOCTYPE html><html lang="zh-Hant"><head><meta charset="utf-8"><style>${CSS}</style></head><body>${markdownToHtml(md)}</body></html>`;
   const mathjax = await loadMathJax();
 
+  // 動態載入：在沒有瀏覽器的環境（如 Vercel）也不會讓整條路由在載入時崩潰
+  const { chromium } = await import("playwright-core");
   const browser = await chromium.launch({ executablePath: findBrowser() });
   try {
     const page = await browser.newPage();
