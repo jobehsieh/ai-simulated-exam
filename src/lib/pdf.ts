@@ -23,7 +23,18 @@ function findLocalBrowser(): string | undefined {
   return LOCAL_BROWSER_CANDIDATES.find((p) => p && existsSync(p));
 }
 
-async function launchBrowser(local: string | undefined): Promise<Browser> {
+// 同一個函式實例可能同時處理多個請求（試題卷與解答卷各一個）。雲端首次啟動要把 Chromium 解壓到 /tmp，
+// 若兩個請求同時解壓並執行，會出現 `spawn ETXTBSY`（一邊還在寫檔，另一邊就想執行它）。
+// 所以同一個實例內的「解壓＋啟動」一律排隊；解壓完成後，後續啟動只是執行現成的檔案，很快。
+let launchQueue: Promise<unknown> = Promise.resolve();
+
+function launchBrowser(local: string | undefined): Promise<Browser> {
+  const launched = launchQueue.then(() => launchBrowserNow(local));
+  launchQueue = launched.catch(() => undefined);
+  return launched;
+}
+
+async function launchBrowserNow(local: string | undefined): Promise<Browser> {
   const { default: puppeteer } = await import("puppeteer-core");
   if (local) return puppeteer.launch({ executablePath: local, headless: true });
 
