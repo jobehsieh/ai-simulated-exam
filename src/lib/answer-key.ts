@@ -62,6 +62,7 @@ export interface AnswerKeyProgress {
  * 單次請求短、不易被上游中途切斷，逐題驗算也更專注。第四部分計分表由呼叫端依題目結構產生。
  */
 export async function generateAnswerKey(opts: {
+  apiKey: string;
   subject: Subject;
   examBody: string;
   problems: ParsedProblem[];
@@ -69,7 +70,7 @@ export async function generateAnswerKey(opts: {
   signal?: AbortSignal;
   onProgress?: (p: AnswerKeyProgress) => void;
 }): Promise<{ markdown: string; warnings: string[] }> {
-  const { subject, examBody, problems, sessionId, signal, onProgress } = opts;
+  const { apiKey, subject, examBody, problems, sessionId, signal, onProgress } = opts;
   const warnings: string[] = [];
   const state = problems.map(() => ({ contentChars: 0, reasoningChars: 0, finished: false }));
   const report = () =>
@@ -84,6 +85,7 @@ export async function generateAnswerKey(opts: {
   const solved = await mapPool(problems, 4, async (problem, index) => {
     const result = await retryOnce(async () => {
       const text = await chatCompletion({
+        apiKey,
         messages: [
           { role: "system", content: SYSTEM_PROMPT },
           { role: "user", content: buildAnswerPrompt(subject, examBody, problem) },

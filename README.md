@@ -9,7 +9,16 @@
 npm run dev      # http://localhost:3000
 ```
 
-需要本機安裝 Edge 或 Chrome（用來把 HTML 列印成 PDF）。`.env.local` 需有 `OpenCode_GO_KEY`。
+需要本機安裝 Edge 或 Chrome（用來把 HTML 列印成 PDF）。
+
+## BYOK（自備金鑰）
+
+本專案**不使用伺服器端的環境變數金鑰**。每位使用者在網頁右上角「API 金鑰」貼上自己的 OpenCode Go 金鑰：
+
+- 金鑰存在該瀏覽器的 `localStorage`（key：`ai-simulated-exam:opencode-api-key`），伺服器不儲存、不記錄。
+- 呼叫 `POST /simulated-exam` 與 `POST /simulated-exam/verify` 時，以 header `x-opencode-key` 帶上；伺服器只在該次請求的記憶體中使用，並在錯誤訊息中遮蔽金鑰。
+- 沒帶金鑰回 `401 { code: "no-key" }`；金鑰被 OpenCode 拒絕時，生成串流會送出 `{ type: "error", code: "auth" }`，前端據此重新開啟設定視窗。
+- 若部署到公開網址，務必使用 HTTPS，否則金鑰會以明文經過網路。
 
 ## 頁面
 
@@ -20,10 +29,11 @@ npm run dev      # http://localhost:3000
 ## 流程
 
 1. 前端選科目（可複選）與參照學校（可複選，只能選該科在考古題資料夾有資料的學校）。
-2. `POST /simulated-exam`：依科目主題權重與學校風格出題 → 逐題撰寫解答 → 轉 PDF，回傳 NDJSON 進度串流。
+2. `POST /simulated-exam`（需帶 `x-opencode-key`）：依科目主題權重與學校風格出題 → 逐題撰寫解答 → 轉 PDF，回傳 NDJSON 進度串流。
 3. `GET /simulated-exam/preview?id=…&kind=exam|answer`：預覽草稿 PDF（尚未寫入資料夾）。
 4. `POST /simulated-exam/save`：使用者確認後，存入 `模擬考題\{科目}\`（檔名已存在時加流水號，不覆蓋）。
 5. `GET /simulated-exam`：選單資料（科目、學校、考古題資料夾實際收錄的學年度）。
+6. `POST /simulated-exam/verify`（需帶 `x-opencode-key`）：送出極小請求驗證金鑰是否可用。
 
 ## 卷面規則（`src/lib/exam-config.ts`、`src/lib/exam.ts`）
 
@@ -36,7 +46,6 @@ npm run dev      # http://localhost:3000
 
 | 變數 | 預設 | 說明 |
 |------|------|------|
-| `OpenCode_GO_KEY` | （必填） | OpenCode Go API 金鑰 |
 | `OPENCODE_GO_MODEL` | `glm-5.3` | 模型 ID |
 | `OPENCODE_GO_REASONING_EFFORT` | `low` | 推理量。`medium`/`high` 思考過久時上游會中斷串流 |
 | `OPENCODE_GO_BASE_URL` | `https://opencode.ai/zen/go/v1` | API 位址 |

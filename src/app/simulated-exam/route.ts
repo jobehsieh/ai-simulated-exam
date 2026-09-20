@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { readApiKey, redactKey } from "@/lib/api-key-server";
 import { OUTPUT_DIR, scanAllArchives } from "@/lib/archive";
 import { createDraft } from "@/lib/drafts";
 import { generatePaper, getExamDate } from "@/lib/exam";
@@ -13,6 +14,7 @@ import {
   type School,
   type Subject,
 } from "@/lib/exam-config";
+import { OpenCodeAuthError } from "@/lib/opencode";
 import { markdownToPdf } from "@/lib/pdf";
 
 export const dynamic = "force-dynamic";
@@ -56,6 +58,11 @@ function pickIds<T>(value: unknown, lookup: (id: string) => T | undefined): T[] 
  * 因為一份試卷需要數分鐘，前端才能即時顯示進度。
  */
 export async function POST(request: Request) {
+  // BYOK：金鑰由使用者的瀏覽器經 header 帶來，只在這次請求中使用
+  const auth = readApiKey(request);
+  if (!auth.ok) return auth.response;
+  const apiKey = auth.key;
+
   let body: GenerateBody;
   try {
     body = await request.json();
@@ -91,6 +98,7 @@ export async function POST(request: Request) {
 
           send({ type: "status", subject: subject.id, message: "開始出題" });
           const paper = await generatePaper({
+            apiKey,
             subject,
             schools: usable,
             date,
@@ -118,7 +126,11 @@ export async function POST(request: Request) {
           });
         } catch (error) {
           if (request.signal.aborted) break;
-          send({ type: "error", subject: subject.id, message: error instanceof Error ? error.message : String(error) });
+          const message = redactKey(error instanceof Error ? error.message : String(error), apiKey);
+          const authFailed = error instanceof OpenCodeAuthError;
+          send({ type: "error", subject: subject.id, message, ...(authFailed && { code: "auth" }) });
+          // 金鑰被拒絕時，後面的科目也一定會失敗，直接結束
+          if (authFailed) break;
         }
       }
       send({ type: "end" });

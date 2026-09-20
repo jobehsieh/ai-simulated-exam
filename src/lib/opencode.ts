@@ -3,6 +3,14 @@ const MODEL = process.env.OPENCODE_GO_MODEL ?? "glm-5.3";
 // 推理模型預設思考量很大（可能數萬字仍無輸出），出題預設用 low；可設為 medium / high 換取更嚴謹的驗算
 const REASONING_EFFORT = process.env.OPENCODE_GO_REASONING_EFFORT ?? "low";
 
+/** 金鑰被 OpenCode Go 拒絕（401/403）。不該重試，前端會據此提示重新設定金鑰 */
+export class OpenCodeAuthError extends Error {
+  constructor() {
+    super("OpenCode Go 拒絕了這把 API 金鑰，請檢查金鑰是否正確、訂閱是否仍有效");
+    this.name = "OpenCodeAuthError";
+  }
+}
+
 export interface ChatMessage {
   role: "system" | "user" | "assistant";
   content: string;
@@ -14,6 +22,8 @@ interface StreamChunk {
 }
 
 export interface CompletionOptions {
+  /** 使用者自帶的 OpenCode API key（BYOK），每次呼叫由請求 header 傳入 */
+  apiKey: string;
   messages: ChatMessage[];
   /** 同一段對話請共用同一個 session id（OpenCode Go 用來路由與快取） */
   sessionId: string;
@@ -27,6 +37,7 @@ export interface CompletionOptions {
 
 /** 呼叫 OpenCode Go 的 OpenAI 相容 chat completions（串流），回傳完整內容文字 */
 export async function chatCompletion({
+  apiKey,
   messages,
   sessionId,
   signal,
@@ -34,9 +45,6 @@ export async function chatCompletion({
   reasoningEffort = REASONING_EFFORT as "low" | "medium" | "high",
   onProgress,
 }: CompletionOptions): Promise<string> {
-  const apiKey = process.env.OpenCode_GO_KEY;
-  if (!apiKey) throw new Error("找不到環境變數 OpenCode_GO_KEY，請確認 .env.local");
-
   const res = await fetch(`${BASE_URL}/chat/completions`, {
     method: "POST",
     headers: {
@@ -55,6 +63,7 @@ export async function chatCompletion({
     signal,
   });
 
+  if (res.status === 401 || res.status === 403) throw new OpenCodeAuthError();
   if (!res.ok || !res.body) {
     const detail = await res.text().catch(() => "");
     throw new Error(`OpenCode Go API 錯誤 (${res.status})：${detail.slice(0, 300)}`);

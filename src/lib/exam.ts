@@ -155,6 +155,7 @@ export interface GeneratedPaper {
 }
 
 export async function generatePaper(opts: {
+  apiKey: string;
   subject: Subject;
   schools: School[];
   date: ExamDate;
@@ -162,7 +163,7 @@ export async function generatePaper(opts: {
   signal?: AbortSignal;
   onProgress?: (p: GenerateProgress) => void;
 }): Promise<GeneratedPaper> {
-  const { subject, schools, date, sessionId, signal, onProgress } = opts;
+  const { apiKey, subject, schools, date, sessionId, signal, onProgress } = opts;
   const plan = buildPlan(subject, schools);
   const warnings: string[] = [];
 
@@ -173,7 +174,8 @@ export async function generatePaper(opts: {
 
   let body = stripCodeFence(
     await retryOnce(
-      () => chatCompletion({ messages, sessionId, signal, onProgress: (p) => onProgress?.({ stage: "exam", ...p }) }),
+      () =>
+        chatCompletion({ apiKey, messages, sessionId, signal, onProgress: (p) => onProgress?.({ stage: "exam", ...p }) }),
       signal,
     ),
   );
@@ -193,6 +195,7 @@ export async function generatePaper(opts: {
       await retryOnce(
         () =>
           chatCompletion({
+            apiKey,
             messages: retryMessages,
             sessionId,
             signal,
@@ -208,6 +211,7 @@ export async function generatePaper(opts: {
   const problems = parseProblems(body);
 
   const key = await generateAnswerKey({
+    apiKey,
     subject,
     examBody: body,
     problems,

@@ -1,4 +1,5 @@
 import Link from "next/link";
+import ApiKeyButton from "./ApiKeyButton";
 import Logo from "./Logo";
 
 const NAV = [
@@ -27,15 +28,18 @@ export default function SiteHeader() {
           ))}
         </nav>
 
-        <Link
-          href="/studio"
-          className="group inline-flex items-center gap-2 rounded-full bg-ink px-5 py-2 text-sm font-medium text-paper transition-colors hover:bg-vermilion focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-vermilion"
-        >
-          開始出題
-          <span aria-hidden className="transition-transform group-hover:translate-x-0.5">
-            →
-          </span>
-        </Link>
+        <div className="flex items-center gap-2.5">
+          <ApiKeyButton />
+          <Link
+            href="/studio"
+            className="group inline-flex items-center gap-2 rounded-full bg-ink px-5 py-2 text-sm font-medium text-paper transition-colors hover:bg-vermilion focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-vermilion"
+          >
+            開始出題
+            <span aria-hidden className="transition-transform group-hover:translate-x-0.5">
+              →
+            </span>
+          </Link>
+        </div>
       </div>
     </header>
   );

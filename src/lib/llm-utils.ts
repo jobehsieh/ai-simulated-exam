@@ -1,3 +1,5 @@
+import { OpenCodeAuthError } from "./opencode";
+
 export const SYSTEM_PROMPT =
   "You are an expert author of computer-science graduate-school entrance examinations. You write original, well-posed, technically correct problems and you verify every answer before finalizing.";
 
@@ -8,12 +10,12 @@ export function stripCodeFence(text: string): string {
   return (m ? m[1] : trimmed).trim();
 }
 
-/** 失敗時重試一次（使用者取消時不重試） */
+/** 失敗時重試一次（使用者取消、金鑰被拒絕時不重試） */
 export async function retryOnce<T>(fn: () => Promise<T>, signal?: AbortSignal): Promise<T> {
   try {
     return await fn();
   } catch (error) {
-    if (signal?.aborted) throw error;
+    if (signal?.aborted || error instanceof OpenCodeAuthError) throw error;
     return fn();
   }
 }
