@@ -7,7 +7,6 @@ import {
   type School,
   type Subject,
 } from "./exam-config";
-import { generateAnswerKey } from "./answer-key";
 import { SYSTEM_PROMPT, hasMergedTable, retryOnce, stripCodeFence } from "./llm-utils";
 import { chatCompletion, type ChatMessage } from "./opencode";
 
@@ -31,6 +30,17 @@ export function getExamDate(now = new Date()): ExamDate {
   const get = (type: string) => parts.find((p) => p.type === type)?.value ?? "";
   const [y, m, d] = [get("year"), get("month"), get("day")];
   return { iso: `${y}-${m}-${d}`, zh: `${y} 年 ${Number(m)} 月 ${Number(d)} 日`, compact: `${y}${m}${d}` };
+}
+
+/** 由 YYYY-MM-DD 重建 ExamDate；格式或日期不合法時丟出錯誤（用戶端傳入的值不可信） */
+export function dateFromIso(iso: string): ExamDate {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso);
+  const parsed = new Date(`${iso}T00:00:00Z`);
+  // 例如 2026-02-31 會被 Date 進位成 3 月，所以要比對回轉後的字串
+  if (!m || Number.isNaN(parsed.getTime()) || !parsed.toISOString().startsWith(iso)) {
+    throw new Error("出題日期格式不正確");
+  }
+  return { iso, zh: `${m[1]} 年 ${Number(m[2])} 月 ${Number(m[3])} 日`, compact: `${m[1]}${m[2]}${m[3]}` };
 }
 
 export const examTitle = `${EXAM_YEAR} 學年度碩士班入學考試模擬試題`;
@@ -138,32 +148,28 @@ Hard requirements:
 - Every problem must be well-posed with a unique, verifiable answer.`;
 }
 
-export interface GenerateProgress {
-  stage: "exam" | "exam-retry" | "solution";
-  contentChars: number;
-  reasoningChars: number;
-  /** 解答階段：已完成 / 總題數 */
-  done?: number;
-  total?: number;
-}
-
-export interface GeneratedPaper {
-  examMd: string;
-  answerMd: string;
+export interface GeneratedExam {
+  /** 題目本文（不含卷頭），用戶端在後續步驟會原樣帶回 */
+  body: string;
+  problems: ParsedProblem[];
   warnings: string[];
   plan: ExamPlan;
 }
 
-export async function generatePaper(opts: {
+/** 卷頭（程式產生）+ 題目本文，即試題卷 Markdown */
+export function buildExamMarkdown(subject: Subject, dateIso: string, body: string): string {
+  return `${buildExamHeader(subject, dateFromIso(dateIso), "exam")}\n\n${body}\n`;
+}
+
+/** 第一步：出題。回傳題目本文與解析出的大題結構；配分不對時自動請模型重寫一次 */
+export async function generateExamBody(opts: {
   apiKey: string;
   subject: Subject;
   schools: School[];
-  date: ExamDate;
   sessionId: string;
   signal?: AbortSignal;
-  onProgress?: (p: GenerateProgress) => void;
-}): Promise<GeneratedPaper> {
-  const { apiKey, subject, schools, date, sessionId, signal, onProgress } = opts;
+}): Promise<GeneratedExam> {
+  const { apiKey, subject, schools, sessionId, signal } = opts;
   const plan = buildPlan(subject, schools);
   const warnings: string[] = [];
 
@@ -172,16 +178,10 @@ export async function generatePaper(opts: {
     { role: "user", content: buildExamPrompt(subject, schools, plan) },
   ];
 
-  let body = stripCodeFence(
-    await retryOnce(
-      () =>
-        chatCompletion({ apiKey, messages, sessionId, signal, onProgress: (p) => onProgress?.({ stage: "exam", ...p }) }),
-      signal,
-    ),
-  );
+  let body = stripCodeFence(await retryOnce(() => chatCompletion({ apiKey, messages, sessionId, signal }), signal));
 
   // 配分不對是試卷的根本缺陷，自動請模型修正一次
-  let issues = validateExamBody(body);
+  const issues = validateExamBody(body);
   if (issues.length > 0) {
     const retryMessages: ChatMessage[] = [
       ...messages,
@@ -192,48 +192,10 @@ export async function generatePaper(opts: {
       },
     ];
     body = stripCodeFence(
-      await retryOnce(
-        () =>
-          chatCompletion({
-            apiKey,
-            messages: retryMessages,
-            sessionId,
-            signal,
-            onProgress: (p) => onProgress?.({ stage: "exam-retry", ...p }),
-          }),
-        signal,
-      ),
+      await retryOnce(() => chatCompletion({ apiKey, messages: retryMessages, sessionId, signal }), signal),
     );
-    issues = validateExamBody(body);
-    warnings.push(...issues.map((i) => `試題檢查未通過：${i}，請人工確認或重新生成`));
+    warnings.push(...validateExamBody(body).map((i) => `試題檢查未通過：${i}，請人工確認或重新生成`));
   }
 
-  const problems = parseProblems(body);
-
-  const key = await generateAnswerKey({
-    apiKey,
-    subject,
-    examBody: body,
-    problems,
-    sessionId,
-    signal,
-    onProgress: (p) => onProgress?.({ stage: "solution", ...p }),
-  });
-  warnings.push(...key.warnings);
-
-  const scoreSheet = [
-    "## 第四部分：計分表",
-    "",
-    "| 題號 | 配分 | 得分 |",
-    "|------|------|------|",
-    ...problems.map((p) => `| ${p.no} | ${p.points} | |`),
-    `| **總分** | **${problems.reduce((sum, p) => sum + p.points, 0)}** | |`,
-  ].join("\n");
-
-  return {
-    examMd: `${buildExamHeader(subject, date, "exam")}\n\n${body}\n`,
-    answerMd: `${buildExamHeader(subject, date, "answer")}\n\n${key.markdown}\n${scoreSheet}\n`,
-    warnings,
-    plan,
-  };
+  return { body, problems: parseProblems(body), warnings, plan };
 }

@@ -1,44 +1,32 @@
-import { readdir } from "node:fs/promises";
-import path from "node:path";
+import manifest from "@/data/archive-manifest.json";
 import { SCHOOLS, SUBJECTS, type SchoolId, type Subject, type SubjectId } from "./exam-config";
 
-export const ARCHIVE_DIR = process.env.EXAM_ARCHIVE_DIR ?? "D:\\d\\0-agent\\資工所考古題";
-export const OUTPUT_DIR = process.env.EXAM_OUTPUT_DIR ?? "D:\\d\\0-agent\\模擬考題";
+// 考古題年度清單：{ 科目資料夾: { 學校: [學年度] } }。
+// 由 `npm run archive:manifest` 掃描本機考古題資料夾產生並隨專案附帶，
+// 這樣部署在雲端（讀不到本機磁碟）時也能知道各科各校有哪些考古題。
+const MANIFEST = manifest as Record<string, Record<string, number[]>>;
 
 export interface ArchiveEntry {
   school: SchoolId;
-  /** 該科目在考古題資料夾中找到的學年度 */
+  /** 該科目在考古題資料夾中收錄的學年度 */
   years: number[];
 }
 
-async function listDir(dir: string): Promise<string[]> {
-  try {
-    return await readdir(dir);
-  } catch {
-    return [];
-  }
-}
-
-/** 掃描考古題資料夾，回傳某科目各校有哪些學年度的考古題 */
-export async function scanSubjectArchive(subject: Subject): Promise<ArchiveEntry[]> {
+/** 某科目各校收錄的學年度（合科考卷也算該科的參考資料） */
+export function scanSubjectArchive(subject: Subject): ArchiveEntry[] {
   const entries: ArchiveEntry[] = [];
   for (const school of SCHOOLS) {
     const years = new Set<number>();
     for (const dir of subject.archiveDirs) {
-      // 路徑來自使用者設定的外部資料夾，不是專案檔案，告訴打包器不必追蹤整個專案
-      const files = await listDir(path.join(/* turbopackIgnore: true */ ARCHIVE_DIR, dir, school.archiveName));
-      for (const file of files) {
-        const m = file.match(/_(\d{3})_/);
-        if (m && file.toLowerCase().endsWith(".pdf")) years.add(Number(m[1]));
-      }
+      for (const y of MANIFEST[dir]?.[school.archiveName] ?? []) years.add(y);
     }
     if (years.size > 0) entries.push({ school: school.id, years: [...years].sort((a, b) => a - b) });
   }
   return entries;
 }
 
-export async function scanAllArchives(): Promise<Record<SubjectId, ArchiveEntry[]>> {
+export function scanAllArchives(): Record<SubjectId, ArchiveEntry[]> {
   const result = {} as Record<SubjectId, ArchiveEntry[]>;
-  for (const subject of SUBJECTS) result[subject.id] = await scanSubjectArchive(subject);
+  for (const subject of SUBJECTS) result[subject.id] = scanSubjectArchive(subject);
   return result;
 }

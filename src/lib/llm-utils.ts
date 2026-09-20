@@ -20,20 +20,6 @@ export async function retryOnce<T>(fn: () => Promise<T>, signal?: AbortSignal): 
   }
 }
 
-/** 以固定並行數執行，回傳結果保留輸入順序 */
-export async function mapPool<T, R>(items: T[], limit: number, fn: (item: T, index: number) => Promise<R>): Promise<R[]> {
-  const results = new Array<R>(items.length);
-  let next = 0;
-  const worker = async () => {
-    while (next < items.length) {
-      const index = next++;
-      results[index] = await fn(items[index], index);
-    }
-  };
-  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
-  return results;
-}
-
 /** 偵測「整張表格被壓成同一行」：含 |---| 分隔線卻不是純分隔列的行 */
 export function hasMergedTable(md: string): boolean {
   return md.split("\n").some((line) => /-{3,}\s*\|/.test(line) && !/^\s*\|?[\s:|-]+\|?\s*$/.test(line));

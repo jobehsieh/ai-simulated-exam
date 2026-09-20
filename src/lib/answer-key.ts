@@ -1,13 +1,27 @@
+import { buildExamHeader, dateFromIso, parseProblems, type ParsedProblem } from "./exam";
 import { SCHOOL_NAME_PATTERN, type Subject } from "./exam-config";
-import type { ParsedProblem } from "./exam";
-import { hasMergedTable, mapPool, retryOnce, stripCodeFence, SYSTEM_PROMPT } from "./llm-utils";
+import { hasMergedTable, retryOnce, stripCodeFence, SYSTEM_PROMPT } from "./llm-utils";
 import { chatCompletion } from "./opencode";
 
 const MARK_SOLUTION = "===SOLUTION===";
 const MARK_TABLE = "===TABLE===";
 const MARK_RUBRIC = "===RUBRIC===";
 
-function buildAnswerPrompt(subject: Subject, examBody: string, problem: ParsedProblem): string {
+/** 解答單一大題所需的題目資訊（由用戶端從出題結果帶回） */
+export interface ProblemRef {
+  no: number;
+  points: number;
+  title: string;
+}
+
+/** 單一大題的解答，三部分分開保存，最後由 buildAnswerMarkdown 組成完整解答卷 */
+export interface SolvedProblem {
+  solution: string;
+  tableRows: string[];
+  rubric: string;
+}
+
+function buildAnswerPrompt(subject: Subject, examBody: string, problem: ProblemRef): string {
   return `Below is the full problem body of a mock exam for "${subject.name}". Write the answer key for problem ${problem.no} ONLY (the other problems are given for context). Write in Traditional Chinese (keep technical terms and math in English/LaTeX).
 
 <exam>
@@ -28,12 +42,6 @@ Bullet-list scoring rules for this problem: computation — final answer correct
 Markdown tables must have every row on its own line with a blank line before and after. Never mention any school or university name. Math uses LaTeX ($...$ / $$...$$); a literal dollar sign must be written as \\$.`;
 }
 
-interface SolvedProblem {
-  solution: string;
-  tableRows: string[];
-  rubric: string;
-}
-
 function parseSolved(text: string): SolvedProblem | null {
   const i1 = text.indexOf(MARK_SOLUTION);
   const i2 = text.indexOf(MARK_TABLE);
@@ -50,73 +58,52 @@ function parseSolved(text: string): SolvedProblem | null {
   return solution && rubric && tableRows.length > 0 ? { solution, tableRows, rubric } : null;
 }
 
-export interface AnswerKeyProgress {
-  contentChars: number;
-  reasoningChars: number;
-  done: number;
-  total: number;
-}
-
-/**
- * 解答卷第一～三部分。每個大題各發一個請求（並行 4 個）：
- * 單次請求短、不易被上游中途切斷，逐題驗算也更專注。第四部分計分表由呼叫端依題目結構產生。
- */
-export async function generateAnswerKey(opts: {
+/** 解答單一大題（一次 LLM 請求，夠短，能在無伺服器函式的時限內完成） */
+export async function solveProblem(opts: {
   apiKey: string;
   subject: Subject;
   examBody: string;
-  problems: ParsedProblem[];
+  problem: ProblemRef;
   sessionId: string;
   signal?: AbortSignal;
-  onProgress?: (p: AnswerKeyProgress) => void;
-}): Promise<{ markdown: string; warnings: string[] }> {
-  const { apiKey, subject, examBody, problems, sessionId, signal, onProgress } = opts;
-  const warnings: string[] = [];
-  const state = problems.map(() => ({ contentChars: 0, reasoningChars: 0, finished: false }));
-  const report = () =>
-    onProgress?.({
-      contentChars: state.reduce((sum, p) => sum + p.contentChars, 0),
-      reasoningChars: state.reduce((sum, p) => sum + p.reasoningChars, 0),
-      done: state.filter((p) => p.finished).length,
-      total: problems.length,
+}): Promise<{ solved: SolvedProblem; warnings: string[] }> {
+  const { apiKey, subject, examBody, problem, sessionId, signal } = opts;
+  const solved = await retryOnce(async () => {
+    const text = await chatCompletion({
+      apiKey,
+      messages: [
+        { role: "system", content: SYSTEM_PROMPT },
+        { role: "user", content: buildAnswerPrompt(subject, examBody, problem) },
+      ],
+      sessionId,
+      signal,
+      maxTokens: 16000,
     });
-  report();
+    const parsed = parseSolved(text);
+    if (!parsed) throw new Error(`第 ${problem.no} 題的解答格式不符`);
+    return parsed;
+  }, signal);
 
-  const solved = await mapPool(problems, 4, async (problem, index) => {
-    const result = await retryOnce(async () => {
-      const text = await chatCompletion({
-        apiKey,
-        messages: [
-          { role: "system", content: SYSTEM_PROMPT },
-          { role: "user", content: buildAnswerPrompt(subject, examBody, problem) },
-        ],
-        sessionId,
-        signal,
-        maxTokens: 16000,
-        onProgress: (p) => {
-          state[index].contentChars = p.contentChars;
-          state[index].reasoningChars = p.reasoningChars;
-          report();
-        },
-      });
-      const parsed = parseSolved(text);
-      if (!parsed) throw new Error(`第 ${problem.no} 題的解答格式不符`);
-      return parsed;
-    }, signal);
-    state[index].finished = true;
-    report();
-    return result;
-  });
+  const warnings: string[] = [];
+  const rowPoints = solved.tableRows.reduce((sum, row) => sum + (Number(row.split("|")[3]) || 0), 0);
+  if (rowPoints !== problem.points) {
+    warnings.push(`解答卷第 ${problem.no} 題的計分明細表配分加總為 ${rowPoints}，與試題的 ${problem.points} 不符，請人工確認`);
+  }
+  if (SCHOOL_NAME_PATTERN.test(`${solved.solution}\n${solved.rubric}`)) {
+    warnings.push(`解答卷第 ${problem.no} 題的內容出現學校名稱，請人工確認`);
+  }
+  return { solved, warnings };
+}
 
-  problems.forEach((problem, index) => {
-    const rowPoints = solved[index].tableRows.reduce((sum, row) => sum + (Number(row.split("|")[3]) || 0), 0);
-    if (rowPoints !== problem.points) {
-      warnings.push(`解答卷第 ${problem.no} 題的計分明細表配分加總為 ${rowPoints}，與試題的 ${problem.points} 不符，請人工確認`);
-    }
-  });
-
+/** 依題目結構與各題解答，組成完整解答卷 Markdown（含由程式產生的計分表） */
+export function buildAnswerMarkdown(subject: Subject, dateIso: string, examBody: string, solved: SolvedProblem[]): string {
+  const problems = parseProblems(examBody);
+  if (problems.length === 0 || problems.length !== solved.length) {
+    throw new Error("題目數與解答數不一致，無法組成解答卷");
+  }
   const totalPoints = problems.reduce((sum, p) => sum + p.points, 0);
-  const markdown = [
+
+  const key = [
     "## 第一部分：逐題解答",
     "",
     solved.map((r) => r.solution).join("\n\n"),
@@ -130,9 +117,22 @@ export async function generateAnswerKey(opts: {
     "",
     "## 第三部分：評分標準（Rubric）",
     "",
-    ...problems.flatMap((problem, index) => [`### ${problem.no}. (${problem.points}%) ${problem.title}`, "", solved[index].rubric, ""]),
+    ...problems.flatMap((problem: ParsedProblem, index) => [
+      `### ${problem.no}. (${problem.points}%) ${problem.title}`,
+      "",
+      solved[index].rubric,
+      "",
+    ]),
   ].join("\n");
 
-  if (SCHOOL_NAME_PATTERN.test(markdown)) warnings.push("解答卷內容出現學校名稱，請人工確認");
-  return { markdown, warnings };
+  const scoreSheet = [
+    "## 第四部分：計分表",
+    "",
+    "| 題號 | 配分 | 得分 |",
+    "|------|------|------|",
+    ...problems.map((p) => `| ${p.no} | ${p.points} | |`),
+    `| **總分** | **${totalPoints}** | |`,
+  ].join("\n");
+
+  return `${buildExamHeader(subject, dateFromIso(dateIso), "answer")}\n\n${key}\n${scoreSheet}\n`;
 }

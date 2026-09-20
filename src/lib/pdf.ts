@@ -1,9 +1,12 @@
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
-import { marked } from "marked";
+import { Marked } from "marked";
+import type { Browser } from "puppeteer-core";
 
-const BROWSER_CANDIDATES = [
+// ── 瀏覽器：本機有 Edge / Chrome 就用它；沒有（如 Vercel）就用 @sparticuz/chromium ──────────────
+
+const LOCAL_BROWSER_CANDIDATES = [
   process.env.BROWSER_PATH,
   "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe",
   "C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe",
@@ -16,25 +19,72 @@ const BROWSER_CANDIDATES = [
   "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
 ];
 
-function findBrowser(): string {
-  const found = BROWSER_CANDIDATES.find((p) => p && existsSync(p));
-  if (!found) throw new Error("找不到 Edge 或 Chrome，請以環境變數 BROWSER_PATH 指定瀏覽器執行檔");
-  return found;
+function findLocalBrowser(): string | undefined {
+  return LOCAL_BROWSER_CANDIDATES.find((p) => p && existsSync(p));
 }
 
-/** 這個環境能否產生 PDF（需要本機安裝 Edge / Chrome）。Vercel 這類無伺服器環境沒有，會回傳 false */
-export function pdfSupported(): boolean {
-  try {
-    findBrowser();
-    return true;
-  } catch {
-    return false;
-  }
+async function launchBrowser(local: string | undefined): Promise<Browser> {
+  const { default: puppeteer } = await import("puppeteer-core");
+  if (local) return puppeteer.launch({ executablePath: local, headless: true });
+
+  // 雲端：無伺服器環境沒有系統瀏覽器，改用打包好的 Chromium
+  const { default: chromium } = await import("@sparticuz/chromium");
+  return puppeteer.launch({
+    args: await puppeteer.defaultArgs({ args: chromium.args, headless: "shell" }),
+    executablePath: await chromium.executablePath(),
+    headless: "shell",
+  });
 }
+
+// ── Markdown → 安全的 HTML ───────────────────────────────────────────────────
+
+const escapeHtml = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+
+/**
+ * 轉檔的 Markdown 來自呼叫 API 的用戶端（雲端版伺服器是無狀態的），必須視為不可信：
+ * 跳脫原始 HTML（只放行 <br>、<sub>、<sup>）、不輸出圖片與連結，避免注入腳本或讓瀏覽器去抓外部資源。
+ */
+const safeMarked = new Marked({
+  gfm: true,
+  renderer: {
+    html({ text }) {
+      return /^<\/?(br|sub|sup)\s*\/?>$/i.test(text.trim()) ? text.trim() : escapeHtml(text);
+    },
+    image({ text }) {
+      return escapeHtml(text);
+    },
+    link({ tokens }) {
+      return this.parser.parseInline(tokens);
+    },
+  },
+});
+
+/** Markdown → HTML，公式先以佔位符保護，避免被 Markdown 語法破壞 */
+export function markdownToHtml(md: string): string {
+  const stash: string[] = [];
+  const hold = (html: string) => {
+    stash.push(html);
+    return `@@STASH${stash.length - 1}@@`;
+  };
+
+  let text = md.replace(/@@STASH\d+@@/g, ""); // 使用者內容不得冒充佔位符
+  text = text.replace(/```[\s\S]*?```/g, (block) => {
+    const code = block.replace(/^```[^\n]*\n?/, "").replace(/\n?```$/, "");
+    return hold(`<pre><code>${escapeHtml(code)}</code></pre>`);
+  });
+  text = text.replace(/\\\$/g, () => hold('<span class="tex2jax_ignore">$</span>'));
+  text = text.replace(/\$\$[\s\S]+?\$\$/g, (m) => hold(escapeHtml(m)));
+  text = text.replace(/\$[^$\n]+\$/g, (m) => hold(escapeHtml(m)));
+
+  const html = safeMarked.parse(text, { async: false });
+  return html.replace(/@@STASH(\d+)@@/g, (_, i) => stash[Number(i)]);
+}
+
+// ── HTML → PDF ───────────────────────────────────────────────────────────────
 
 const CSS = `
 @page { size: A4; }
-body { font-family: 'Microsoft JhengHei', 'Noto Sans CJK TC', 'Segoe UI', sans-serif; font-size: 11.5pt; line-height: 1.6; color: #111; margin: 0; }
+body { font-family: 'Microsoft JhengHei', 'Noto Sans TC', 'Segoe UI', sans-serif; font-size: 11.5pt; line-height: 1.6; color: #111; margin: 0; }
 h1 { font-size: 17pt; text-align: center; border-bottom: 2px solid #333; padding-bottom: 6px; margin: 0 0 12px; }
 h2 { font-size: 13.5pt; margin: 20px 0 6px; break-after: avoid; }
 h3 { font-size: 12pt; margin: 14px 0 4px; break-after: avoid; }
@@ -51,28 +101,10 @@ hr { border: none; border-top: 1px solid #bbb; margin: 14px 0; }
 mjx-container[display="true"] { margin: 8px 0 !important; }
 `;
 
-const escapeHtml = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-
-/** Markdown → HTML，公式先以佔位符保護，避免被 Markdown 語法破壞 */
-export function markdownToHtml(md: string): string {
-  const stash: string[] = [];
-  const hold = (html: string) => {
-    stash.push(html);
-    return `@@STASH${stash.length - 1}@@`;
-  };
-
-  let text = md.replace(/```[\s\S]*?```/g, (block) => {
-    const code = block.replace(/^```[^\n]*\n?/, "").replace(/\n?```$/, "");
-    return hold(`<pre><code>${escapeHtml(code)}</code></pre>`);
-  });
-  text = text.replace(/\\\$/g, () => hold('<span class="tex2jax_ignore">$</span>'));
-  text = text.replace(/\$\$[\s\S]+?\$\$/g, (m) => hold(escapeHtml(m)));
-  text = text.replace(/\$[^$\n]+\$/g, (m) => hold(escapeHtml(m)));
-
-  let html = marked.parse(text, { async: false, gfm: true });
-  html = html.replace(/@@STASH(\d+)@@/g, (_, i) => stash[Number(i)]);
-  return html;
-}
+// 雲端環境沒有中文字型，從 Google Fonts 載入（只會下載頁面實際用到的字元切片）
+const WEB_FONT_LINK =
+  '<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;700&display=block">';
+const ALLOWED_REMOTE = /^https:\/\/fonts\.(googleapis|gstatic)\.com\//;
 
 const MATHJAX_CONFIG = `window.MathJax = {
   tex: { inlineMath: [['$', '$']], displayMath: [['$$', '$$']] },
@@ -86,29 +118,46 @@ function loadMathJax(): Promise<string> {
   return mathjaxSource;
 }
 
-/** Markdown → A4 PDF（MathJax 於本機渲染公式，不需連網），頁尾為「第 X 頁，共 Y 頁」 */
+/** Markdown → A4 PDF（MathJax 於伺服器端渲染公式），頁尾為「第 X 頁，共 Y 頁」 */
 export async function markdownToPdf(md: string): Promise<Buffer> {
-  const html = `<!DOCTYPE html><html lang="zh-Hant"><head><meta charset="utf-8"><style>${CSS}</style></head><body>${markdownToHtml(md)}</body></html>`;
+  const local = findLocalBrowser();
+  const cloud = !local;
+  const html = `<!DOCTYPE html><html lang="zh-Hant"><head><meta charset="utf-8">${cloud ? WEB_FONT_LINK : ""}<style>${CSS}</style></head><body>${markdownToHtml(md)}</body></html>`;
   const mathjax = await loadMathJax();
 
-  // 動態載入：在沒有瀏覽器的環境（如 Vercel）也不會讓整條路由在載入時崩潰
-  const { chromium } = await import("playwright-core");
-  const browser = await chromium.launch({ executablePath: findBrowser() });
+  const browser = await launchBrowser(local);
   try {
     const page = await browser.newPage();
+    page.setDefaultTimeout(90_000);
+
+    // 只允許頁面內嵌資料與（雲端時）Google Fonts，其餘網路請求一律擋下
+    await page.setRequestInterception(true);
+    page.on("request", (req) => {
+      const url = req.url();
+      if (url.startsWith("data:") || url.startsWith("about:") || (cloud && ALLOWED_REMOTE.test(url))) void req.continue();
+      else void req.abort();
+    });
+
     await page.setContent(html, { waitUntil: "load" });
     await page.addScriptTag({ content: MATHJAX_CONFIG });
     await page.addScriptTag({ content: mathjax });
     await page.evaluate(async () => {
       await (window as unknown as { MathJax: { startup: { promise: Promise<unknown> } } }).MathJax.startup.promise;
+      await document.fonts.ready;
     });
+    // 雲端的中文字型是排版後才開始下載的：等網路靜止，再確認字型都載入完成
+    if (cloud) {
+      await page.waitForNetworkIdle({ idleTime: 600, timeout: 60_000 });
+      await page.evaluate(() => document.fonts.ready.then(() => undefined));
+    }
+
     const pdf = await page.pdf({
       format: "A4",
       printBackground: true,
       displayHeaderFooter: true,
       headerTemplate: "<span></span>",
       footerTemplate:
-        '<div style="width:100%;font-size:9px;text-align:center;font-family:\'Microsoft JhengHei\',sans-serif;color:#555;">第 <span class="pageNumber"></span> 頁，共 <span class="totalPages"></span> 頁</div>',
+        '<div style="width:100%;font-size:9px;text-align:center;font-family:\'Microsoft JhengHei\',\'Noto Sans TC\',sans-serif;color:#555;">第 <span class="pageNumber"></span> 頁，共 <span class="totalPages"></span> 頁</div>',
       margin: { top: "18mm", bottom: "18mm", left: "18mm", right: "18mm" },
     });
     return Buffer.from(pdf);

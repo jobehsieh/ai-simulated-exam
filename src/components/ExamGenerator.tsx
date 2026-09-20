@@ -1,7 +1,15 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { apiKeyHeaders, openApiKeyDialog, useApiKey } from "@/lib/api-key-client";
+import { openApiKeyDialog, useApiKey } from "@/lib/api-key-client";
+import { ApiError, runSubject, type PlanInfo } from "@/lib/exam-client";
+import {
+  chooseSaveFolder,
+  forgetSavedFolder,
+  getSavedFolderName,
+  isFolderSaveSupported,
+  savePdfs,
+} from "@/lib/save-client";
 
 interface ArchiveEntry {
   school: string;
@@ -14,27 +22,30 @@ interface PlanTopic {
 interface Options {
   year: number;
   durationMinutes: number;
-  outputDir: string;
-  capabilities: { pdf: boolean };
   schools: { id: string; name: string }[];
   subjects: { id: string; name: string; archive: ArchiveEntry[]; plan: { topics: PlanTopic[] } }[];
+}
+
+interface SubjectFiles {
+  examPdf: Blob;
+  answerPdf: Blob;
+  /** 供預覽（iframe）與下載使用的 blob 網址 */
+  examUrl: string;
+  answerUrl: string;
+  /** 檔名主體（不含 .pdf 與流水號） */
+  base: string;
 }
 
 interface SubjectResult {
   state: "running" | "done" | "error" | "saved";
   message: string;
-  draftId?: string;
   warnings: string[];
-  plan?: { topics: PlanTopic[]; mix: { calc: number; proof: number; concept: number } };
+  plan?: PlanInfo;
   usedSchools?: string[];
-  saved?: { folder: string; examPath: string; answerPath: string };
+  files?: SubjectFiles;
+  savedPaths?: string[];
+  savedMode?: "folder" | "download";
 }
-
-const STAGE_LABEL: Record<string, string> = {
-  exam: "出題中",
-  "exam-retry": "配分不符，重新出題中",
-  solution: "撰寫解答卷中",
-};
 
 const yearRange = (years: number[]) => (years.length > 1 ? `${years[0]}–${years[years.length - 1]}` : `${years[0]}`);
 
@@ -78,12 +89,19 @@ export default function ExamGenerator() {
   const [preview, setPreview] = useState<Record<string, "exam" | "answer">>({});
   const abortRef = useRef<AbortController | null>(null);
   const apiKey = useApiKey();
+  const [folderName, setFolderName] = useState<string | null>(null);
+  // 元件在選項載入後才會顯示，所以用初始化函式判斷瀏覽器能力不會造成水合不一致
+  const [folderSupported] = useState(isFolderSaveSupported);
+  const urlsRef = useRef<string[]>([]);
 
   useEffect(() => {
     fetch("/simulated-exam")
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))))
       .then(setOptions)
       .catch((e) => setLoadError(`讀取選項失敗：${e.message}`));
+    void getSavedFolderName().then(setFolderName);
+    const urls = urlsRef;
+    return () => urls.current.forEach((u) => URL.revokeObjectURL(u));
   }, []);
 
   const toggle = (list: string[], set: (v: string[]) => void, id: string) =>
@@ -97,12 +115,14 @@ export default function ExamGenerator() {
   }, []);
 
   async function generate() {
-    if (!options || subjects.length === 0 || !options.capabilities.pdf) return;
+    if (!options || subjects.length === 0) return;
     // BYOK：沒有金鑰就先請使用者設定
     if (!apiKey) {
       openApiKeyDialog();
       return;
     }
+    urlsRef.current.forEach((u) => URL.revokeObjectURL(u));
+    urlsRef.current = [];
     setRunning(true);
     setGlobalError("");
     setResults({});
@@ -110,77 +130,84 @@ export default function ExamGenerator() {
     const controller = new AbortController();
     abortRef.current = controller;
 
-    try {
-      const res = await fetch("/simulated-exam", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", ...apiKeyHeaders(apiKey) },
-        body: JSON.stringify({ subjects, schools }),
-        signal: controller.signal,
-      });
-      if (!res.ok || !res.body) {
-        const data = await res.json().catch(() => ({}));
-        if (res.status === 401) openApiKeyDialog();
-        throw new Error(data.error ?? `HTTP ${res.status}`);
-      }
-
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = "";
-      const handle = (line: string) => {
-        if (!line.trim()) return;
-        const ev = JSON.parse(line);
-        if (ev.type === "status") patch(ev.subject, { state: "running", message: ev.message });
-        else if (ev.type === "progress") {
-          const count = ev.total ? `${ev.done}/${ev.total} 題完成，` : "";
-          patch(ev.subject, {
-            state: "running",
-            message: `${STAGE_LABEL[ev.stage] ?? "處理中"}（${count}已收到 ${ev.contentChars} 字${ev.contentChars === 0 ? "，模型思考中" : ""}）`,
-          });
-        } else if (ev.type === "done") {
-          patch(ev.subject, {
-            state: "done",
-            message: "已生成，請預覽並確認",
-            draftId: ev.id,
-            warnings: ev.warnings,
-            plan: ev.plan,
-            usedSchools: ev.schools,
-          });
-          setPreview((p) => ({ ...p, [ev.subject]: "exam" }));
-        } else if (ev.type === "error") {
-          patch(ev.subject, { state: "error", message: ev.message });
-          if (ev.code === "auth") openApiKeyDialog(); // 金鑰被 OpenCode 拒絕，請使用者更換
+    // 多科依序進行；每一科的流程由 runSubject 以多個短請求接力完成（適合無伺服器平台的時限）
+    for (const subjectId of subjects) {
+      if (controller.signal.aborted) break;
+      const subjectName = options.subjects.find((s) => s.id === subjectId)?.name ?? subjectId;
+      patch(subjectId, { state: "running", message: "準備中…" });
+      try {
+        const run = await runSubject({
+          apiKey,
+          subjectId,
+          schoolIds: schools,
+          signal: controller.signal,
+          onStatus: (message) => patch(subjectId, { state: "running", message }),
+        });
+        const examUrl = URL.createObjectURL(run.examPdf);
+        const answerUrl = URL.createObjectURL(run.answerPdf);
+        urlsRef.current.push(examUrl, answerUrl);
+        patch(subjectId, {
+          state: "done",
+          message: "已生成，請預覽並確認",
+          warnings: run.warnings,
+          plan: run.plan,
+          usedSchools: run.usedSchools,
+          files: {
+            examPdf: run.examPdf,
+            answerPdf: run.answerPdf,
+            examUrl,
+            answerUrl,
+            base: `${subjectName}_${options.year}學年度模擬試題_${run.dateCompact}`,
+          },
+        });
+        setPreview((p) => ({ ...p, [subjectId]: "exam" }));
+      } catch (e) {
+        if (controller.signal.aborted) {
+          patch(subjectId, { state: "error", message: "已取消" });
+          break;
         }
-      };
-
-      for (;;) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split("\n");
-        buffer = lines.pop() ?? "";
-        lines.forEach(handle);
+        patch(subjectId, { state: "error", message: e instanceof Error ? e.message : String(e) });
+        if (e instanceof ApiError && e.isKeyProblem) {
+          openApiKeyDialog(); // 金鑰需要（重新）設定；後面的科目也一定會失敗，直接結束
+          break;
+        }
       }
-      handle(buffer);
+    }
+    setRunning(false);
+    abortRef.current = null;
+  }
+
+  async function save(subjectId: string, subjectName: string) {
+    const files = results[subjectId]?.files;
+    if (!files) return;
+    patch(subjectId, { message: "儲存中…" });
+    try {
+      const saved = await savePdfs(subjectName, files.base, [
+        { tail: ".pdf", blob: files.examPdf },
+        { tail: "_解答卷.pdf", blob: files.answerPdf },
+      ]);
+      patch(subjectId, { state: "saved", message: "已儲存", savedPaths: saved.paths, savedMode: saved.mode });
+      if (saved.mode === "folder") setFolderName(saved.folderName);
     } catch (e) {
-      if (!controller.signal.aborted) setGlobalError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setRunning(false);
-      abortRef.current = null;
+      if (e instanceof DOMException && e.name === "AbortError") {
+        patch(subjectId, { message: "已取消選擇資料夾，尚未儲存" });
+        return;
+      }
+      patch(subjectId, { message: `儲存失敗：${e instanceof Error ? e.message : String(e)}` });
     }
   }
 
-  async function save(subject: string) {
-    const draftId = results[subject]?.draftId;
-    if (!draftId) return;
-    patch(subject, { message: "儲存中…" });
-    const res = await fetch("/simulated-exam/save", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ id: draftId }),
-    });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) patch(subject, { message: `儲存失敗：${data.error ?? res.status}` });
-    else patch(subject, { state: "saved", message: "已儲存", saved: data });
+  async function changeFolder() {
+    try {
+      setFolderName(await chooseSaveFolder());
+    } catch (e) {
+      if (!(e instanceof DOMException && e.name === "AbortError")) setGlobalError(e instanceof Error ? e.message : String(e));
+    }
+  }
+
+  async function clearFolder() {
+    await forgetSavedFolder();
+    setFolderName(null);
   }
 
   if (loadError) return <p className="rounded-xl border border-vermilion/40 bg-vermilion/5 p-5 text-vermilion">{loadError}</p>;
@@ -193,17 +220,6 @@ export default function ExamGenerator() {
 
   return (
     <div className="flex flex-col gap-6">
-      {/* 伺服器環境不支援 PDF（例如 Vercel）：明確告知，不讓使用者白等 */}
-      {!options.capabilities.pdf && (
-        <section className="rounded-2xl border border-marker bg-marker/25 p-5 sm:px-8">
-          <h2 className="font-serif text-lg font-bold">此環境目前無法出題</h2>
-          <p className="mt-1 text-sm leading-relaxed">
-            這個伺服器沒有 Edge 或 Chrome，無法把試卷轉成 PDF；也讀不到本機的考古題與模擬考題資料夾。
-            請在你自己的電腦上執行本專案（<code className="font-mono">npm run dev</code>）來使用出題功能。
-          </p>
-        </section>
-      )}
-
       {/* 尚未設定 API 金鑰（BYOK） */}
       {apiKey === null && (
         <section className="flex flex-wrap items-center justify-between gap-4 rounded-2xl border border-vermilion/40 bg-vermilion/[0.06] p-5 sm:px-8">
@@ -312,8 +328,34 @@ export default function ExamGenerator() {
           </div>
           <div className="sm:col-span-2">
             <dt className="font-mono text-xs text-vermilion">OUTPUT</dt>
-            <dd className="mt-1 break-all leading-relaxed">
-              試題卷與解答卷各一份 PDF，確認後存入 {options.outputDir}\{"{科目}"}\
+            <dd className="mt-1 leading-relaxed">
+              試題卷與解答卷各一份 PDF。確認後存入你選擇的資料夾，並自動依科目建立子資料夾（建議選「模擬考題」）。
+            </dd>
+            <dd className="mt-3 flex flex-wrap items-center gap-3">
+              {folderSupported ? (
+                <>
+                  <span className="rounded-full border border-ink/15 bg-white/70 px-4 py-1.5">
+                    {folderName ? `儲存資料夾：${folderName}` : "尚未選擇資料夾（第一次儲存時會請你選擇）"}
+                  </span>
+                  <button
+                    onClick={changeFolder}
+                    disabled={running}
+                    className="rounded-full border border-ink/30 px-4 py-1.5 font-medium transition-colors enabled:hover:border-ink enabled:hover:bg-ink enabled:hover:text-paper disabled:opacity-40"
+                  >
+                    {folderName ? "更換資料夾" : "選擇資料夾"}
+                  </button>
+                  {folderName && (
+                    <button
+                      onClick={clearFolder}
+                      className="text-vermilion underline decoration-vermilion/40 underline-offset-4 hover:decoration-vermilion"
+                    >
+                      忘記資料夾
+                    </button>
+                  )}
+                </>
+              ) : (
+                <span className="text-ink-soft">你的瀏覽器不支援指定資料夾（請用 Edge / Chrome），儲存時會改為下載檔案。</span>
+              )}
             </dd>
           </div>
         </dl>
@@ -321,7 +363,7 @@ export default function ExamGenerator() {
         <div className="mt-8 flex flex-wrap items-center gap-4 border-t border-ink/15 pt-6">
           <button
             onClick={generate}
-            disabled={running || subjects.length === 0 || !options.capabilities.pdf}
+            disabled={running || subjects.length === 0}
             className="group inline-flex items-center gap-3 rounded-full bg-vermilion px-8 py-3.5 text-base font-bold text-white shadow-[0_6px_0_-2px_rgb(120_28_14)] transition-all enabled:hover:translate-y-0.5 enabled:hover:shadow-[0_4px_0_-2px_rgb(120_28_14)] enabled:active:translate-y-1.5 enabled:active:shadow-none disabled:cursor-not-allowed disabled:bg-ink/25 disabled:shadow-none focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-ink"
           >
             {running ? "生成中…" : "生成試題"}
@@ -399,7 +441,7 @@ export default function ExamGenerator() {
                 </ul>
               )}
 
-              {r.draftId && (
+              {r.files && (
                 <>
                   <div className="mt-6 inline-flex rounded-full border border-ink/20 bg-white/60 p-1">
                     {(["exam", "answer"] as const).map((k) => (
@@ -415,14 +457,14 @@ export default function ExamGenerator() {
                     ))}
                   </div>
                   <iframe
-                    key={`${r.draftId}-${kind}`}
-                    src={`/simulated-exam/preview?id=${r.draftId}&kind=${kind}`}
+                    key={`${r.files.base}-${kind}`}
+                    src={kind === "exam" ? r.files.examUrl : r.files.answerUrl}
                     title={`${name}${kind === "exam" ? "試題卷" : "解答卷"}預覽`}
                     className="mt-4 h-[78vh] w-full rounded-xl border border-ink/20 bg-paper-deep shadow-[0_18px_40px_-24px_rgb(28_26_22/0.5)]"
                   />
                   <div className="mt-6 flex flex-wrap items-center gap-4">
                     <button
-                      onClick={() => save(id)}
+                      onClick={() => save(id, name)}
                       disabled={r.state === "saved"}
                       className="rounded-full bg-ink px-7 py-3 text-base font-bold text-paper transition-colors enabled:hover:bg-vermilion disabled:cursor-not-allowed disabled:opacity-40 focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-vermilion"
                     >
@@ -430,11 +472,32 @@ export default function ExamGenerator() {
                     </button>
                     {r.state !== "saved" && <span className="text-sm text-ink-soft">內容有問題請重新按「生成試題」。</span>}
                   </div>
-                  {r.saved && (
+                  <p className="mt-3 text-sm text-ink-soft">
+                    也可以直接下載：
+                    <a
+                      href={r.files.examUrl}
+                      download={`${r.files.base}.pdf`}
+                      className="ml-1 underline underline-offset-4 hover:text-vermilion"
+                    >
+                      試題卷
+                    </a>
+                    <span className="mx-1.5">・</span>
+                    <a
+                      href={r.files.answerUrl}
+                      download={`${r.files.base}_解答卷.pdf`}
+                      className="underline underline-offset-4 hover:text-vermilion"
+                    >
+                      解答卷
+                    </a>
+                  </p>
+                  {r.savedPaths && (
                     <p className="mt-4 break-all rounded-xl bg-emerald-700/10 p-4 text-sm leading-relaxed text-emerald-900">
-                      已儲存：{r.saved.examPath}
-                      <br />
-                      已儲存：{r.saved.answerPath}
+                      {r.savedMode === "download" ? "已下載到瀏覽器的下載資料夾：" : "已儲存："}
+                      {r.savedPaths.map((path) => (
+                        <span key={path} className="block">
+                          {path}
+                        </span>
+                      ))}
                     </p>
                   )}
                 </>
