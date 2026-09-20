@@ -1,26 +1,149 @@
 @import "tailwindcss";
 
+/*
+ * 設計語彙：試卷 × 老師紅筆
+ * 米白紙張為底、墨黑文字、硃砂紅為批改重點色，靛藍為輔助色；
+ * 標題用中文襯線體（印刷品感），內文用黑體，數字與英文點綴用 Instrument Serif 斜體。
+ */
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --paper: #f6f1e5;
+  --paper-deep: #ece4d0;
+  --sheet: #fdfaf2;
+  --ink: #1c1a16;
+  --ink-soft: #5b564a;
+  --line: #d8ceb6;
+  --vermilion: #c93a22;
+  --indigo: #27317a;
+  --marker: #f4d35e;
 }
 
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --color-paper: var(--paper);
+  --color-paper-deep: var(--paper-deep);
+  --color-sheet: var(--sheet);
+  --color-ink: var(--ink);
+  --color-ink-soft: var(--ink-soft);
+  --color-line: var(--line);
+  --color-vermilion: var(--vermilion);
+  --color-indigo: var(--indigo);
+  --color-marker: var(--marker);
+
+  --font-sans: var(--font-sans-tc), "Microsoft JhengHei", ui-sans-serif, system-ui, sans-serif;
+  --font-serif: var(--font-serif-tc), "PMingLiU", ui-serif, Georgia, serif;
+  --font-display: var(--font-display-latin), var(--font-serif-tc), ui-serif, Georgia, serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, monospace;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+/* 紙張質感的整體為淺色設計，不跟隨系統深色模式 */
+html {
+  color-scheme: light;
+  scroll-behavior: smooth;
+  scroll-padding-top: 5rem;
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background-color: var(--paper);
+  /* 極淡的方格紙紋理 */
+  background-image:
+    linear-gradient(to right, rgb(28 26 22 / 0.035) 1px, transparent 1px),
+    linear-gradient(to bottom, rgb(28 26 22 / 0.035) 1px, transparent 1px);
+  background-size: 32px 32px;
+  color: var(--ink);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+::selection {
+  background: var(--marker);
+  color: var(--ink);
+}
+
+/* 螢光筆畫線：用在標題重點字詞 */
+.marker {
+  background-image: linear-gradient(transparent 62%, var(--marker) 62%, var(--marker) 92%, transparent 92%);
+  padding-inline: 0.1em;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+}
+
+/* 紅筆手寫底線 */
+.pen-underline {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 200 12' preserveAspectRatio='none'%3E%3Cpath d='M2 8 C 40 2, 70 11, 110 6 S 170 3, 198 7' fill='none' stroke='%23c93a22' stroke-width='3' stroke-linecap='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: 0 100%;
+  background-size: 100% 0.32em;
+  padding-bottom: 0.18em;
+}
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(18px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes stamp {
+  0% {
+    opacity: 0;
+    transform: scale(1.8) rotate(-24deg);
+  }
+  60% {
+    opacity: 1;
+    transform: scale(0.94) rotate(-14deg);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1) rotate(-14deg);
+  }
+}
+
+@keyframes draw {
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+.animate-rise {
+  animation: rise 0.7s cubic-bezier(0.2, 0.7, 0.2, 1) both;
+}
+
+.animate-stamp {
+  animation: stamp 0.5s cubic-bezier(0.2, 0.9, 0.3, 1) 1.1s both;
+}
+
+.animate-draw {
+  stroke-dasharray: 1;
+  stroke-dashoffset: 1;
+  animation: draw 0.8s ease-out 0.9s forwards;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+  .animate-rise,
+  .animate-stamp,
+  .animate-draw {
+    animation: none;
+    opacity: 1;
+    stroke-dashoffset: 0;
+  }
+  .animate-stamp {
+    transform: rotate(-14deg);
+  }
+}
+
+/* FAQ 展開圖示 */
+details > summary {
+  list-style: none;
+}
+details > summary::-webkit-details-marker {
+  display: none;
+}
+details[open] .faq-icon {
+  transform: rotate(45deg);
 }
