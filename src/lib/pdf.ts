@@ -106,6 +106,12 @@ const WEB_FONT_LINK =
   '<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;700&display=block">';
 const ALLOWED_REMOTE = /^https:\/\/fonts\.(googleapis|gstatic)\.com\//;
 
+// 頁尾在獨立的環境渲染，吃不到網頁載入的中文字型：本機有系統字型可用「第 X 頁，共 Y 頁」，
+// 雲端沒有中文字型，改用純英數字的「X / Y」，避免中文字變成看不見的空白
+const FOOTER_STYLE = "width:100%;font-size:9px;text-align:center;color:#555;";
+const FOOTER_LOCAL = `<div style="${FOOTER_STYLE}font-family:'Microsoft JhengHei',sans-serif;">第 <span class="pageNumber"></span> 頁，共 <span class="totalPages"></span> 頁</div>`;
+const FOOTER_CLOUD = `<div style="${FOOTER_STYLE}font-family:sans-serif;"><span class="pageNumber"></span> / <span class="totalPages"></span></div>`;
+
 const MATHJAX_CONFIG = `window.MathJax = {
   tex: { inlineMath: [['$', '$']], displayMath: [['$$', '$$']] },
   svg: { fontCache: 'global' },
@@ -156,8 +162,7 @@ export async function markdownToPdf(md: string): Promise<Buffer> {
       printBackground: true,
       displayHeaderFooter: true,
       headerTemplate: "<span></span>",
-      footerTemplate:
-        '<div style="width:100%;font-size:9px;text-align:center;font-family:\'Microsoft JhengHei\',\'Noto Sans TC\',sans-serif;color:#555;">第 <span class="pageNumber"></span> 頁，共 <span class="totalPages"></span> 頁</div>',
+      footerTemplate: cloud ? FOOTER_CLOUD : FOOTER_LOCAL,
       margin: { top: "18mm", bottom: "18mm", left: "18mm", right: "18mm" },
     });
     return Buffer.from(pdf);
