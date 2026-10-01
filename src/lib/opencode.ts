@@ -1,12 +1,12 @@
-const BASE_URL = process.env.OPENCODE_GO_BASE_URL ?? "https://opencode.ai/zen/go/v1";
-const MODEL = process.env.OPENCODE_GO_MODEL ?? "glm-5.3";
+const BASE_URL = process.env.LLM_BASE_URL ?? "https://generativelanguage.googleapis.com/v1beta/openai";
+const MODEL = process.env.LLM_MODEL ?? "gemini-flash-latest";
 // 推理模型預設思考量很大（可能數萬字仍無輸出），出題預設用 low；可設為 medium / high 換取更嚴謹的驗算
-const REASONING_EFFORT = process.env.OPENCODE_GO_REASONING_EFFORT ?? "low";
+const REASONING_EFFORT = process.env.LLM_REASONING_EFFORT ?? "low";
 
 /** 金鑰被 OpenCode Go 拒絕（401/403）。不該重試，前端會據此提示重新設定金鑰 */
 export class OpenCodeAuthError extends Error {
   constructor() {
-    super("OpenCode Go 拒絕了這把 API 金鑰，請檢查金鑰是否正確、訂閱是否仍有效");
+    super("Gemini API 拒絕了這把金鑰，請檢查金鑰是否正確、是否仍有效");
     this.name = "OpenCodeAuthError";
   }
 }
@@ -29,7 +29,7 @@ export interface CompletionOptions {
   sessionId: string;
   signal?: AbortSignal;
   maxTokens?: number;
-  /** 推理量，未指定時用環境變數 OPENCODE_GO_REASONING_EFFORT（預設 low） */
+  /** 推理量，未指定時用環境變數 LLM_REASONING_EFFORT（預設 low） */
   reasoningEffort?: "low" | "medium" | "high";
   /** 每收到一段內容就呼叫，reasoning 為推理過程（不會進入結果） */
   onProgress?: (info: { contentChars: number; reasoningChars: number }) => void;
@@ -50,7 +50,6 @@ export async function chatCompletion({
     headers: {
       Authorization: `Bearer ${apiKey}`,
       "Content-Type": "application/json",
-      "x-opencode-session": sessionId,
     },
     body: JSON.stringify({
       model: MODEL,
@@ -66,7 +65,7 @@ export async function chatCompletion({
   if (res.status === 401 || res.status === 403) throw new OpenCodeAuthError();
   if (!res.ok || !res.body) {
     const detail = await res.text().catch(() => "");
-    throw new Error(`OpenCode Go API 錯誤 (${res.status})：${detail.slice(0, 300)}`);
+    throw new Error(`Gemini API 錯誤 (${res.status})：${detail.slice(0, 300)}`);
   }
 
   const reader = res.body.getReader();
@@ -86,7 +85,7 @@ export async function chatCompletion({
     } catch {
       return;
     }
-    if (chunk.error) throw new Error(`OpenCode Go API 錯誤：${chunk.error.message ?? "未知錯誤"}`);
+    if (chunk.error) throw new Error(`Gemini API 錯誤：${chunk.error.message ?? "未知錯誤"}`);
     const choice = chunk.choices?.[0];
     if (choice?.delta?.content) content += choice.delta.content;
     if (choice?.delta?.reasoning_content) reasoningChars += choice.delta.reasoning_content.length;

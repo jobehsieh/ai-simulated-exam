@@ -7,6 +7,9 @@ export type ApiKeyResult = { ok: true; key: string } | { ok: false; response: Re
  * 金鑰只在該次請求的記憶體內使用：不寫檔、不記錄、不回傳給前端。
  */
 export function readApiKey(request: Request): ApiKeyResult {
+  // 伺服器端金鑰（GEMINI_API_KEY）優先；未設定時才退回使用者自帶金鑰（BYOK）
+  const serverKey = process.env.GEMINI_API_KEY?.trim();
+  if (serverKey) return { ok: true, key: serverKey };
   const key = request.headers.get(API_KEY_HEADER)?.trim() ?? "";
   if (!key) {
     return {

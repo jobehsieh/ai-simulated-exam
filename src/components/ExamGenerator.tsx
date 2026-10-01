@@ -116,11 +116,6 @@ export default function ExamGenerator() {
 
   async function generate() {
     if (!options || subjects.length === 0) return;
-    // BYOK：沒有金鑰就先請使用者設定
-    if (!apiKey) {
-      openApiKeyDialog();
-      return;
-    }
     urlsRef.current.forEach((u) => URL.revokeObjectURL(u));
     urlsRef.current = [];
     setRunning(true);
@@ -137,7 +132,7 @@ export default function ExamGenerator() {
       patch(subjectId, { state: "running", message: "準備中…" });
       try {
         const run = await runSubject({
-          apiKey,
+          apiKey: apiKey ?? "",
           subjectId,
           schoolIds: schools,
           signal: controller.signal,
@@ -220,24 +215,6 @@ export default function ExamGenerator() {
 
   return (
     <div className="flex flex-col gap-6">
-      {/* 尚未設定 API 金鑰（BYOK） */}
-      {apiKey === null && (
-        <section className="flex flex-wrap items-center justify-between gap-4 rounded-2xl border border-vermilion/40 bg-vermilion/[0.06] p-5 sm:px-8">
-          <div>
-            <h2 className="font-serif text-lg font-bold">先設定你的 API 金鑰</h2>
-            <p className="mt-1 text-sm leading-relaxed text-ink-soft">
-              本服務採 BYOK：出題使用你自己的 OpenCode Go 金鑰，只存在這個瀏覽器，不會上傳保存。
-            </p>
-          </div>
-          <button
-            onClick={openApiKeyDialog}
-            className="rounded-full bg-vermilion px-6 py-2.5 text-sm font-bold text-white transition-colors hover:bg-ink"
-          >
-            設定金鑰
-          </button>
-        </section>
-      )}
-
       {/* 01 科目 */}
       <section className={PANEL}>
         <StepHeading n="01" title="選擇科目" hint="可複選，多科會依序生成，每科各自產出一組試題卷與解答卷。" />
@@ -384,9 +361,7 @@ export default function ExamGenerator() {
           <span className="text-sm text-ink-soft">
             {subjects.length === 0
               ? "請先選擇至少一個科目"
-              : apiKey === null
-                ? "尚未設定 API 金鑰，按下後會先請你設定"
-                : "每科約需 3–4 分鐘，依序生成"}
+              : "每科約需 3–4 分鐘，依序生成"}
           </span>
         </div>
         {globalError && <p className="mt-4 rounded-lg bg-vermilion/10 p-3 text-sm text-vermilion">{globalError}</p>}
