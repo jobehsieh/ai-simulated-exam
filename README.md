@@ -1,6 +1,6 @@
 # AI 考研模擬試題產生器
 
-選擇科目與參照學校的出題形式，由 OpenCode Go 的模型生成「試題卷 + 解答卷」PDF，使用者預覽確認後存入自己選的資料夾（依科目建立子資料夾）。
+選擇科目與參照學校的出題形式，由 Google Gemini 的模型生成「試題卷 + 解答卷」PDF，使用者預覽確認後存入自己選的資料夾（依科目建立子資料夾）。
 出題規格來自 [cs-graduate-exam-skills](https://github.com/jobehsieh/cs-graduate-exam-skills) 的 `mock-exam-generator`（EXAM_SPEC / EXAM_PROMPT）。
 
 可在本機執行，也可部署到 Vercel（雲端）——兩種環境的行為一致。
@@ -14,13 +14,15 @@ npm run dev      # http://localhost:3000
 
 PDF 由伺服器端的 Chromium 產生：本機優先使用已安裝的 Edge / Chrome；沒有（如 Vercel）就使用打包的 `@sparticuz/chromium`。
 
-## BYOK（自備金鑰）
+## API 金鑰
 
-本專案**不使用伺服器端的環境變數金鑰**。每位使用者在網頁右上角「API 金鑰」貼上自己的 OpenCode Go 金鑰：
+優先使用伺服器端環境變數 `GEMINI_API_KEY`（本機放 `.env.local`，Vercel 在專案環境變數設定）；有設定時使用者不需任何操作。
+
+未設定時退回 BYOK：每位使用者在網頁右上角「API 金鑰」貼上自己的 Gemini 金鑰：
 
 - 金鑰存在該瀏覽器的 `localStorage`（key：`ai-simulated-exam:opencode-api-key`），伺服器不儲存、不記錄。
 - 呼叫本站 API 時以 header `x-opencode-key` 帶上；伺服器只在該次請求的記憶體中使用，並在錯誤訊息中遮蔽金鑰。
-- 沒帶金鑰回 `401 { code: "no-key" }`；金鑰被 OpenCode 拒絕回 `401 { code: "auth" }`，前端據此重新開啟設定視窗。
+- 沒帶金鑰回 `401 { code: "no-key" }`；金鑰被 Gemini 拒絕回 `401 { code: "auth" }`，前端據此重新開啟設定視窗。
 - 部署到公開網址務必使用 HTTPS，否則金鑰會以明文經過網路。
 
 ## 架構：無狀態、由瀏覽器接力
@@ -80,7 +82,8 @@ npm run archive:manifest -- <考古題資料夾路徑>
 
 | 變數 | 預設 | 說明 |
 |------|------|------|
-| `OPENCODE_GO_MODEL` | `glm-5.3` | 模型 ID |
-| `OPENCODE_GO_REASONING_EFFORT` | `low` | 推理量。`medium`/`high` 思考過久時上游會中斷串流 |
-| `OPENCODE_GO_BASE_URL` | `https://opencode.ai/zen/go/v1` | API 位址 |
+| `GEMINI_API_KEY` | （無） | 伺服器端金鑰；設定後優先於使用者自帶金鑰 |
+| `LLM_MODEL` | `gemini-flash-latest` | 模型 ID |
+| `LLM_REASONING_EFFORT` | `low` | 推理量。`medium`/`high` 思考過久時上游會中斷串流 |
+| `LLM_BASE_URL` | `https://generativelanguage.googleapis.com/v1beta/openai` | API 位址 |
 | `BROWSER_PATH` | 自動尋找 Edge / Chrome | 本機轉 PDF 用的瀏覽器 |

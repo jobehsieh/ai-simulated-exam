@@ -1,5 +1,5 @@
 // BYOK（Bring Your Own Key）：前後端共用的常數與驗證。
-// 使用者的 OpenCode API key 只存在自己瀏覽器的 localStorage，呼叫本站 API 時放在這個 header 帶上。
+// 使用者的 Gemini API key 只存在自己瀏覽器的 localStorage，呼叫本站 API 時放在這個 header 帶上。
 
 export const API_KEY_HEADER = "x-opencode-key";
 

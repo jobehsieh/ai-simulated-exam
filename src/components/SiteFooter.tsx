@@ -10,7 +10,7 @@ const PRODUCT = [
 
 const RESOURCES = [
   { href: "https://github.com/jobehsieh/cs-graduate-exam-skills", label: "出題規格 · cs-graduate-exam-skills" },
-  { href: "https://opencode.ai", label: "模型服務 · OpenCode Go" },
+  { href: "https://ai.google.dev", label: "模型服務 · Google Gemini" },
 ];
 
 export default function SiteFooter() {

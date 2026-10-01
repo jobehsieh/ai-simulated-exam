@@ -3,7 +3,7 @@ import { API_KEY_HEADER, validateKeyFormat } from "./api-key-shared";
 export type ApiKeyResult = { ok: true; key: string } | { ok: false; response: Response };
 
 /**
- * 從請求 header 取出使用者自帶的 OpenCode API key。
+ * 從請求 header 取出使用者自帶的 Gemini API key。
  * 金鑰只在該次請求的記憶體內使用：不寫檔、不記錄、不回傳給前端。
  */
 export function readApiKey(request: Request): ApiKeyResult {
@@ -15,7 +15,7 @@ export function readApiKey(request: Request): ApiKeyResult {
     return {
       ok: false,
       response: Response.json(
-        { error: "尚未設定 OpenCode API 金鑰，請先到「API 金鑰」設定", code: "no-key" },
+        { error: "尚未設定 Gemini API 金鑰，請先到「API 金鑰」設定", code: "no-key" },
         { status: 401 },
       ),
     };

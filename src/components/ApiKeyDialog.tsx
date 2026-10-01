@@ -18,7 +18,7 @@ const NOTICE_STYLE = {
   info: "bg-ink/5 text-ink-soft",
 } as const;
 
-/** BYOK 設定視窗：使用者貼上自己的 OpenCode API key，存於瀏覽器 localStorage */
+/** BYOK 設定視窗：使用者貼上自己的 Gemini API key，存於瀏覽器 localStorage */
 export default function ApiKeyDialog() {
   const dialogRef = useRef<HTMLDialogElement>(null);
   const saved = useApiKey();
@@ -95,7 +95,7 @@ export default function ApiKeyDialog() {
           <div>
             <p className="font-display text-lg italic text-vermilion">Bring your own key</p>
             <h2 id="api-key-title" className="mt-1 font-serif text-2xl font-black">
-              設定 OpenCode API 金鑰
+              設定 Gemini API 金鑰
             </h2>
           </div>
           <button
@@ -110,7 +110,7 @@ export default function ApiKeyDialog() {
 
         <ul className="mt-5 space-y-2 text-sm leading-relaxed text-ink-soft">
           <li>
-            • 出題使用<b className="text-ink">你自己的</b> OpenCode Go 金鑰，費用計入你的帳戶。
+            • 出題使用<b className="text-ink">你自己的</b> Gemini 金鑰，費用計入你的帳戶（站方已設定伺服器金鑰時不需要）。
           </li>
           <li>
             • 金鑰只存在<b className="text-ink">這個瀏覽器</b>的 localStorage；出題時經由請求 header 傳給本站 API 轉發，
@@ -141,7 +141,7 @@ export default function ApiKeyDialog() {
               onKeyDown={(e) => {
                 if (e.key === "Enter" && draft.trim()) handleSave();
               }}
-              placeholder="你的 OpenCode Go API key"
+              placeholder="你的 Gemini API key"
               autoComplete="off"
               spellCheck={false}
               className="min-w-0 flex-1 rounded-lg border border-ink/25 bg-white px-4 py-2.5 font-mono text-sm outline-none transition-colors focus:border-vermilion focus:ring-2 focus:ring-vermilion/25"
@@ -193,12 +193,12 @@ export default function ApiKeyDialog() {
         <p className="mt-6 border-t border-ink/15 pt-4 text-xs leading-relaxed text-ink-soft">
           還沒有金鑰？請參考{" "}
           <a
-            href="https://opencode.ai/docs/go/"
+            href="https://ai.google.dev/gemini-api/docs/api-key"
             target="_blank"
             rel="noreferrer"
             className="text-ink underline underline-offset-4 hover:text-vermilion"
           >
-            OpenCode Go 文件 ↗
+            Gemini API 金鑰取得說明 ↗
           </a>{" "}
           訂閱並取得 API 金鑰。
         </p>

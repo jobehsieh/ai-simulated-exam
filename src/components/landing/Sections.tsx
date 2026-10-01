@@ -180,7 +180,7 @@ const FAQS = [
   },
   {
     q: "需要準備 API 金鑰嗎？金鑰會被保存嗎？",
-    a: "需要。本服務採 BYOK（自備金鑰）：你在「API 金鑰」設定自己的 OpenCode Go 金鑰，費用計入你自己的帳戶。金鑰只存在你瀏覽器的 localStorage，出題時經由請求 header 傳給本站 API 轉發給 OpenCode，伺服器不儲存、不記錄。共用電腦請在用完後清除。",
+    a: "通常不需要。本站已在伺服器端設定 Google Gemini 金鑰，直接出題即可。若站方未設定，才需要在「API 金鑰」貼上自己的 Gemini 金鑰：金鑰只存在你瀏覽器的 localStorage，出題時經由請求 header 傳給本站 API 轉發給 Gemini，伺服器不儲存、不記錄。共用電腦請在用完後清除。",
   },
   {
     q: "檔案存在哪裡？",

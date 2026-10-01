@@ -4,7 +4,7 @@ import { OpenCodeAuthError, chatCompletion } from "@/lib/opencode";
 
 export const dynamic = "force-dynamic";
 
-/** 驗證使用者填的 OpenCode API 金鑰是否可用（送一個極小的請求，約數十 token）：POST，金鑰放 header */
+/** 驗證使用者填的 Gemini API 金鑰是否可用（送一個極小的請求，約數十 token）：POST，金鑰放 header */
 export async function POST(request: Request) {
   const auth = readApiKey(request);
   if (!auth.ok) return auth.response;
