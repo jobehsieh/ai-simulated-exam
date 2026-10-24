@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="AI 考研模擬試題產生器">
+  <title>AI 考研模擬試題產生器</title>
+    <defs>
+      <linearGradient id="ai-simulated-exam-glyph" x1="0" y1="0" x2="1" y2="1">
+        <stop offset="0" stop-color="#4338ca" />
+        <stop offset="1" stop-color="#312e81" />
+      </linearGradient>
+    </defs>
+  <rect width="64" height="64" rx="15" fill="url(#ai-simulated-exam-glyph)" />
+  <g fill="none" stroke="#ffffff" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round" color="#ffffff">
+    
+    <path d="M8 26 32 14l24 12-24 12z" />
+    <path d="M19 33v9c0 4.5 26 4.5 26 0v-9" />
+    <path d="M52 29v11" />
+  </g>
+</svg>
